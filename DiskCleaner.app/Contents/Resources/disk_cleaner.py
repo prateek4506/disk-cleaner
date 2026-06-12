@@ -27,30 +27,84 @@ from pathlib import Path
 
 HOME = Path.home()
 
-# Optional AI advisor: ask a cheap model about a file before deciding to delete it.
-# Uses OpenCode (Zen free model — works even when the paid Go quota is exhausted). The
-# advisor is ADVISORY ONLY: it never deletes anything; the user still answers y/N afterwards.
-ADVISOR_MODEL = os.environ.get("DISKCLEANER_AI_MODEL", "opencode/deepseek-v4-flash-free")
+# Optional AI advisor: ask a model about a file before deciding to delete it.
+#
+# The advisor is ADVISORY ONLY — it never deletes anything; the user still answers y/N.
+# It needs NO API key of its own; it uses whatever local provider you have, in this order:
+#   1. Ollama   — fully local, no account, no key, private (https://ollama.com). RECOMMENDED.
+#   2. OpenCode  — uses your existing `opencode` login (https://opencode.ai).
+# If neither is available, `?` says so and the normal y/N flow continues.
+#
+# Override the model per provider with env vars:
+#   DISKCLEANER_OLLAMA_MODEL   (default: llama3.2)
+#   DISKCLEANER_OPENCODE_MODEL (default: opencode/deepseek-v4-flash-free)
+OLLAMA_MODEL = os.environ.get("DISKCLEANER_OLLAMA_MODEL", "llama3.2")
+OPENCODE_MODEL = os.environ.get("DISKCLEANER_OPENCODE_MODEL",
+                                os.environ.get("DISKCLEANER_AI_MODEL", "opencode/deepseek-v4-flash-free"))
+# Force a single provider with DISKCLEANER_AI_PROVIDER=ollama|opencode (default: auto = try both).
+FORCED_PROVIDER = os.environ.get("DISKCLEANER_AI_PROVIDER", "").strip().lower()
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
+def _have(cmd: str) -> bool:
+    return shutil.which(cmd) is not None
+
+
+def _ollama_ready() -> bool:
+    """True only if ollama is installed AND the target model is already pulled.
+
+    Without this guard, `ollama run <model>` would silently auto-DOWNLOAD a multi-GB
+    model mid-prompt — a minutes-long hang on first use. We require the model to exist
+    locally so the advisor falls through to the next provider instantly instead.
+    """
+    if not _have("ollama"):
+        return False
+    try:
+        out = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return False
+    base = OLLAMA_MODEL.split(":")[0]
+    # Match the model name at the start of any line (ollama lists "name:tag  id  size …").
+    return any(line.split(":")[0].strip() == base or line.startswith(OLLAMA_MODEL)
+               for line in out.splitlines())
+
+
 def _clean_model_output(raw: str) -> str:
-    """Strip OpenCode's TUI banner + ANSI/control noise, leaving just the model's answer."""
-    # Strip ANSI escapes and stray terminal control bytes (^D EOF, ^H backspace, etc.).
+    """Strip TUI banner + ANSI/control noise, leaving just the model's answer."""
     text = _ANSI_RE.sub("", raw).replace("\r", "")
     text = text.translate({0x04: None, 0x08: None, 0x07: None})
+    # `script` may emit caret representations of control chars (literal "^D", "^H").
+    text = re.sub(r"\^[A-Z@\[\]\\^_]", "", text)
     lines = []
     for line in text.splitlines():
         s = line.strip()
-        # Drop OpenCode's own status lines ("> build · <model>") and empties.
         if not s or s.startswith("> build") or s.startswith(">> "):
             continue
         lines.append(s)
     return "\n".join(lines).strip()
 
 
+def _ask_ollama(prompt: str) -> str:
+    """Local, keyless. Returns the answer text, or '' on failure."""
+    proc = subprocess.run(
+        ["ollama", "run", OLLAMA_MODEL, prompt],
+        capture_output=True, text=True, timeout=120, errors="replace",
+    )
+    return _clean_model_output((proc.stdout or "") + (proc.stderr or ""))
+
+
+def _ask_opencode(prompt: str) -> str:
+    """Uses the user's existing opencode login. Returns the answer text, or '' on failure."""
+    # `script` supplies the pseudo-TTY opencode's `run` needs; -q quiet, no typescript file.
+    proc = subprocess.run(
+        ["script", "-q", "/dev/null", "opencode", "run", "-m", OPENCODE_MODEL, prompt],
+        capture_output=True, text=True, timeout=120, errors="replace",
+    )
+    return _clean_model_output((proc.stdout or "") + (proc.stderr or ""))
+
+
 def ask_about_file(c, question: str) -> None:
-    """Ask the advisor model about candidate `c`; print the answer. Never deletes."""
+    """Ask an available advisor about candidate `c`; print the answer. Never deletes."""
     prompt = (
         "You are advising a user whether a file/folder is safe to delete from their Mac. "
         "Be concise (2-4 sentences), factual, and cautious — if unsure, say so.\n\n"
@@ -59,27 +113,38 @@ def ask_about_file(c, question: str) -> None:
         f"User's question: {question}\n\n"
         "Answer in plain text. Do not take any action; only explain."
     )
+
+    # Build the provider chain. Each entry: (name, available?, runner).
+    providers = [
+        ("Ollama (local)", _ollama_ready(), _ask_ollama),
+        ("OpenCode", _have("opencode"), _ask_opencode),
+    ]
+    if FORCED_PROVIDER in ("ollama", "opencode"):
+        providers = [p for p in providers if p[0].lower().startswith(FORCED_PROVIDER)]
+
+    available = [p for p in providers if p[1]]
+    if not available:
+        print("  (AI advisor unavailable. Install one — both are free and need no API key for this:)")
+        print("    • Ollama (local, private):  https://ollama.com   then:  ollama pull llama3.2")
+        print("    • OpenCode:                 https://opencode.ai   then:  opencode auth login\n")
+        return
+
     print("  … asking the assistant (this can take a few seconds)")
-    try:
-        # `script` supplies the pseudo-TTY OpenCode's `run` needs; -q quiet, no typescript file.
-        proc = subprocess.run(
-            ["script", "-q", "/dev/null", "opencode", "run", "-m", ADVISOR_MODEL, prompt],
-            capture_output=True, text=True, timeout=120, errors="replace",
-        )
-        answer = _clean_model_output((proc.stdout or "") + (proc.stderr or ""))
+    for name, _ok, runner in available:
+        try:
+            answer = runner(prompt)
+        except subprocess.TimeoutExpired:
+            print(f"  ({name} timed out — trying the next provider if any.)")
+            continue
+        except Exception:  # never let the advisor break the cleaner
+            continue
         if answer:
-            print("\n  Assistant:")
+            print(f"\n  Assistant ({name}):")
             for line in answer.splitlines():
                 print(f"    {line}")
             print()
-        else:
-            print("  (No answer — the assistant returned nothing. Its quota may be exhausted.)\n")
-    except FileNotFoundError:
-        print("  (AI advisor unavailable: 'opencode' is not installed.)\n")
-    except subprocess.TimeoutExpired:
-        print("  (AI advisor timed out. Decide using the file path and size below.)\n")
-    except Exception as e:  # never let the advisor break the cleaner
-        print(f"  (AI advisor error: {e})\n")
+            return
+    print("  (No answer from any available assistant. Decide using the path/size below.)\n")
 
 # Each category: (label, list of glob-able roots, match-fn). match-fn(path)->bool
 # decides whether a discovered path qualifies. We deliberately target

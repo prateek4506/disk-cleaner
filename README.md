@@ -65,22 +65,42 @@ At each prompt: `y` delete · `N` skip (default) · `q` quit · **`?` ask the AI
 
 ## The AI advisor (optional)
 
-The `?` feature uses [OpenCode](https://opencode.ai) to answer questions about a file.
+The `?` feature answers questions about a file using a model on **your** machine. **It needs
+no API key from you _or_ the app** — it uses whichever of these you have, in this order:
 
-- **It's optional.** Without `opencode` installed, `?` just says the advisor is unavailable —
-  everything else works normally.
-- **It's free.** Defaults to OpenCode's free Zen model (`opencode/deepseek-v4-flash-free`),
-  so no paid quota is needed.
-- **Pick your model** with `DISKCLEANER_AI_MODEL`:
-  ```bash
-  DISKCLEANER_AI_MODEL="opencode-go/deepseek-v4-flash" disk-cleaner --delete
-  ```
-- **It never acts.** The model only explains; the cleaner only deletes when you type `y`.
+1. **[Ollama](https://ollama.com) — recommended.** Fully local, private, no account, no key.
+   ```bash
+   # one-time setup:
+   brew install ollama && ollama serve   # (or the Ollama app)
+   ollama pull llama3.2
+   ```
+   The advisor only uses Ollama if the model is already pulled, so it never triggers a
+   surprise multi-GB download mid-prompt.
+
+2. **[OpenCode](https://opencode.ai)** — uses your existing `opencode` login
+   (`opencode auth login`). Free Zen model by default.
+
+If **neither** is installed, `?` tells you how to add one and the normal `y/N` flow continues —
+the advisor can never break the cleaner.
+
+**Configure** (all optional):
+```bash
+DISKCLEANER_AI_PROVIDER=ollama      # force one provider (ollama|opencode); default tries both
+DISKCLEANER_OLLAMA_MODEL=llama3.2   # which Ollama model
+DISKCLEANER_OPENCODE_MODEL=opencode/deepseek-v4-flash-free
+```
+
+**It never acts.** The model only explains; the cleaner only deletes when you type `y`.
+
+> Note: there is **no shared/embedded API key** — the AI runs entirely on your own machine
+> via your own local provider. Nothing about your files is sent anywhere unless *you* have
+> configured a provider that does so.
 
 ## Requirements
 
 - macOS, Python 3 (ships with macOS)
-- Optional: [`opencode`](https://opencode.ai) on `PATH` for the `?` advisor
+- Optional, for the `?` advisor: **[Ollama](https://ollama.com)** (local, keyless) *or*
+  **[`opencode`](https://opencode.ai)**. Without either, everything except `?` still works.
 
 ## Safety
 
