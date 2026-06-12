@@ -1,27 +1,29 @@
 #!/bin/bash
 # Launcher for the Disk Cleaner app bundle.
-# Opens Terminal and runs the bundled Python script in interactive delete mode
-# so the user can see the scan and answer the per-file y/N prompts.
+# Opens a Terminal window and runs the bundled Python script in interactive
+# delete mode so the user can see the scan and answer the per-file prompts.
 
-DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"
+# Resolve the bundled script relative to THIS launcher (works whether launched
+# by Finder/LaunchServices or from a shell). Follow symlinks via `pwd -P`.
+SELF="$0"
+DIR="$(cd "$(dirname "$SELF")/../Resources" 2>/dev/null && pwd -P)"
 SCRIPT="$DIR/disk_cleaner.py"
 
-# Write a small runner script to a temp file, then tell Terminal to EXECUTE it
-# (via 'do script'). Just 'open'-ing a .command file only opens a shell without
-# running it, which left the user staring at an empty prompt.
-RUNNER="$(mktemp /tmp/diskcleaner.XXXXXX.sh)"
-cat > "$RUNNER" <<RUNEOF
-#!/bin/bash
-clear
-echo 'Disk Cleaner — scanning your home folder...'
-echo
-/usr/bin/python3 "$SCRIPT" --delete
-echo
-echo 'Done. You can close this window.'
-RUNEOF
-chmod +x "$RUNNER"
+# Fail loudly (in a Terminal window) if we can't find the script, instead of
+# silently doing nothing.
+if [ -z "$DIR" ] || [ ! -f "$SCRIPT" ]; then
+  osascript -e "tell application \"Terminal\" to do script \"echo 'Disk Cleaner: could not locate disk_cleaner.py (looked in: $DIR). Reinstall.'; echo\"" \
+            -e 'tell application "Terminal" to activate'
+  exit 1
+fi
 
-# 'do script' runs the command in a new Terminal window. We pass the runner path
-# as the only argument, so there are no quotes to escape inside the AppleScript.
-osascript -e "tell application \"Terminal\" to do script \"bash '$RUNNER'\"" \
+# Build the command Terminal will run. No temp file, no mktemp — run python3
+# directly. Escape any single quotes in the path so the AppleScript string is safe.
+esc_script=${SCRIPT//\'/\'\\\'\'}
+CMD="clear; echo 'Disk Cleaner — scanning your home folder...'; echo; /usr/bin/python3 '$esc_script' --delete; echo; echo 'Done. You can close this window.'"
+
+# 'do script' runs CMD in a new Terminal window. The outer AppleScript string is
+# double-quoted, so escape the double quotes inside CMD.
+esc_cmd=${CMD//\"/\\\"}
+osascript -e "tell application \"Terminal\" to do script \"$esc_cmd\"" \
           -e 'tell application "Terminal" to activate'
