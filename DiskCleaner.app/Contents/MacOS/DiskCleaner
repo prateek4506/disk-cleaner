@@ -1,0 +1,27 @@
+#!/bin/bash
+# Launcher for the Disk Cleaner app bundle.
+# Opens Terminal and runs the bundled Python script in interactive delete mode
+# so the user can see the scan and answer the per-file y/N prompts.
+
+DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"
+SCRIPT="$DIR/disk_cleaner.py"
+
+# Write a small runner script to a temp file, then tell Terminal to EXECUTE it
+# (via 'do script'). Just 'open'-ing a .command file only opens a shell without
+# running it, which left the user staring at an empty prompt.
+RUNNER="$(mktemp /tmp/diskcleaner.XXXXXX.sh)"
+cat > "$RUNNER" <<RUNEOF
+#!/bin/bash
+clear
+echo 'Disk Cleaner — scanning your home folder...'
+echo
+/usr/bin/python3 "$SCRIPT" --delete
+echo
+echo 'Done. You can close this window.'
+RUNEOF
+chmod +x "$RUNNER"
+
+# 'do script' runs the command in a new Terminal window. We pass the runner path
+# as the only argument, so there are no quotes to escape inside the AppleScript.
+osascript -e "tell application \"Terminal\" to do script \"bash '$RUNNER'\"" \
+          -e 'tell application "Terminal" to activate'
