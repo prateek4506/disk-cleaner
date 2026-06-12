@@ -65,20 +65,21 @@ At each prompt: `y` delete · `N` skip (default) · `q` quit · **`?` ask the AI
 
 ## The AI advisor (optional)
 
-The `?` feature answers questions about a file using a model on **your** machine. **It needs
-no API key from you _or_ the app** — it uses whichever of these you have, in this order:
+The `?` feature answers questions using a model on **your** machine. **It needs no API key
+from you _or_ the app.** It **auto-discovers** whatever you already have and uses it,
+preferring the private/local option:
 
-1. **[Ollama](https://ollama.com) — recommended.** Fully local, private, no account, no key.
+1. **[Ollama](https://ollama.com) — preferred (local & private).** Uses **any model you've
+   already pulled** — no specific model required. If Ollama is installed but you have *no*
+   models yet, `?` offers a one-time download and shows the live progress; it never triggers
+   a surprise download on its own.
    ```bash
-   # one-time setup:
-   brew install ollama && ollama serve   # (or the Ollama app)
-   ollama pull llama3.2
+   brew install ollama && ollama pull llama3.2   # one-time (any model works)
    ```
-   The advisor only uses Ollama if the model is already pulled, so it never triggers a
-   surprise multi-GB download mid-prompt.
 
-2. **[OpenCode](https://opencode.ai)** — uses your existing `opencode` login
-   (`opencode auth login`). Free Zen model by default.
+2. **[OpenCode](https://opencode.ai)** — uses your existing `opencode` login. Auto-picks an
+   **available model, preferring a free one** (so it won't pick a paid model that may be
+   quota-limited).
 
 If **neither** is installed, `?` tells you how to add one and the normal `y/N` flow continues —
 the advisor can never break the cleaner.

@@ -30,19 +30,23 @@ HOME = Path.home()
 # Optional AI advisor: ask a model about a file before deciding to delete it.
 #
 # The advisor is ADVISORY ONLY — it never deletes anything; the user still answers y/N.
-# It needs NO API key of its own; it uses whatever local provider you have, in this order:
-#   1. Ollama   — fully local, no account, no key, private (https://ollama.com). RECOMMENDED.
-#   2. OpenCode  — uses your existing `opencode` login (https://opencode.ai).
+# It needs NO API key of its own. It AUTO-DISCOVERS whatever the user already has and uses it,
+# preferring the private/local option:
+#   1. Ollama   — uses ANY model you've already pulled (local, no account/key). Preferred.
+#   2. OpenCode — uses your existing `opencode` login; auto-picks an available model,
+#                 preferring a free one (so it avoids quota-capped paid models).
 # If neither is available, `?` says so and the normal y/N flow continues.
 #
-# Override the model per provider with env vars:
-#   DISKCLEANER_OLLAMA_MODEL   (default: llama3.2)
-#   DISKCLEANER_OPENCODE_MODEL (default: opencode/deepseek-v4-flash-free)
-OLLAMA_MODEL = os.environ.get("DISKCLEANER_OLLAMA_MODEL", "llama3.2")
-OPENCODE_MODEL = os.environ.get("DISKCLEANER_OPENCODE_MODEL",
-                                os.environ.get("DISKCLEANER_AI_MODEL", "opencode/deepseek-v4-flash-free"))
-# Force a single provider with DISKCLEANER_AI_PROVIDER=ollama|opencode (default: auto = try both).
+# You can still pin choices with env vars (override auto-discovery):
+#   DISKCLEANER_AI_PROVIDER=ollama|opencode   force a single provider
+#   DISKCLEANER_OLLAMA_MODEL=<name>           force a specific Ollama model
+#   DISKCLEANER_OPENCODE_MODEL=<provider/id>  force a specific OpenCode model
 FORCED_PROVIDER = os.environ.get("DISKCLEANER_AI_PROVIDER", "").strip().lower()
+ENV_OLLAMA_MODEL = os.environ.get("DISKCLEANER_OLLAMA_MODEL", "").strip()
+ENV_OPENCODE_MODEL = os.environ.get(
+    "DISKCLEANER_OPENCODE_MODEL", os.environ.get("DISKCLEANER_AI_MODEL", "")).strip()
+# Model offered for download if Ollama is installed but has no models at all.
+OLLAMA_DEFAULT_PULL = os.environ.get("DISKCLEANER_OLLAMA_MODEL", "llama3.2")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
@@ -50,57 +54,119 @@ def _have(cmd: str) -> bool:
     return shutil.which(cmd) is not None
 
 
-def _ollama_ready() -> bool:
-    """True only if ollama is installed AND the target model is already pulled.
-
-    Without this guard, `ollama run <model>` would silently auto-DOWNLOAD a multi-GB
-    model mid-prompt — a minutes-long hang on first use. We require the model to exist
-    locally so the advisor falls through to the next provider instantly instead.
-    """
+def _ollama_models() -> list:
+    """Names of models the user has already pulled (empty list if none / ollama absent)."""
     if not _have("ollama"):
-        return False
+        return []
     try:
         out = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=5).stdout
     except Exception:
-        return False
-    base = OLLAMA_MODEL.split(":")[0]
-    # Match the model name at the start of any line (ollama lists "name:tag  id  size …").
-    return any(line.split(":")[0].strip() == base or line.startswith(OLLAMA_MODEL)
-               for line in out.splitlines())
+        return []
+    models = []
+    for line in out.splitlines()[1:]:           # skip the "NAME  ID  …" header
+        name = line.split()[0].strip() if line.split() else ""
+        if name:
+            models.append(name)
+    return models
+
+
+def _pick_ollama_model() -> str:
+    """Choose an Ollama model: env override if pulled, else any already-pulled model, else ''."""
+    pulled = _ollama_models()
+    if ENV_OLLAMA_MODEL:
+        base = ENV_OLLAMA_MODEL.split(":")[0]
+        if any(m == ENV_OLLAMA_MODEL or m.split(":")[0] == base for m in pulled):
+            return ENV_OLLAMA_MODEL
+    return pulled[0] if pulled else ""
+
+
+def _opencode_models() -> list:
+    """Available OpenCode model ids (provider/model), or [] if opencode absent."""
+    if not _have("opencode"):
+        return []
+    try:
+        out = subprocess.run(["opencode", "models"], capture_output=True, text=True, timeout=8).stdout
+    except Exception:
+        return []
+    return [ln.strip() for ln in out.splitlines() if "/" in ln and not ln.startswith(" ")]
+
+
+def _pick_opencode_model() -> str:
+    """Choose an OpenCode model: env override → a free model → first available.
+
+    Prefer a 'free' model so we don't pick a paid one that may be quota-capped.
+    """
+    models = _opencode_models()
+    if ENV_OPENCODE_MODEL:
+        return ENV_OPENCODE_MODEL          # user knows best; honor verbatim
+    if not models:
+        return ""
+    free = [m for m in models if "free" in m.lower()]
+    return free[0] if free else models[0]
 
 
 def _clean_model_output(raw: str) -> str:
     """Strip TUI banner + ANSI/control noise, leaving just the model's answer."""
-    text = _ANSI_RE.sub("", raw).replace("\r", "")
-    text = text.translate({0x04: None, 0x08: None, 0x07: None})
-    # `script` may emit caret representations of control chars (literal "^D", "^H").
-    text = re.sub(r"\^[A-Z@\[\]\\^_]", "", text)
-    lines = []
+    text = raw.replace("\r", "")
+    text = _ANSI_RE.sub("", text)                       # CSI sequences: ESC [ … letter
+    text = re.sub(r"\x1b\[\?[0-9;]*[a-zA-Z]", "", text)  # private-mode: ESC [ ? … (cursor show/hide, 2026)
+    text = re.sub(r"\x1b[=>]", "", text)                # other ESC sequences
+    text = text.translate({0x04: None, 0x08: None, 0x07: None, 0x1b: None})
+    text = re.sub(r"\^[A-Z@\[\]\\^_]", "", text)        # caret control reps ("^D", "^H")
+    text = re.sub(r"[⠀-⣿]", "", text)         # braille spinner glyphs (⠙⠹⠸…)
+    lines, seen = [], None
     for line in text.splitlines():
         s = line.strip()
         if not s or s.startswith("> build") or s.startswith(">> "):
             continue
+        if s == seen:        # collapse consecutive duplicate lines (TTY redraw artifact)
+            continue
+        seen = s
         lines.append(s)
     return "\n".join(lines).strip()
 
 
-def _ask_ollama(prompt: str) -> str:
+def _ask_ollama(prompt: str, model: str) -> str:
     """Local, keyless. Returns the answer text, or '' on failure."""
     proc = subprocess.run(
-        ["ollama", "run", OLLAMA_MODEL, prompt],
+        ["ollama", "run", model, prompt],
         capture_output=True, text=True, timeout=120, errors="replace",
     )
     return _clean_model_output((proc.stdout or "") + (proc.stderr or ""))
 
 
-def _ask_opencode(prompt: str) -> str:
+def _ask_opencode(prompt: str, model: str) -> str:
     """Uses the user's existing opencode login. Returns the answer text, or '' on failure."""
     # `script` supplies the pseudo-TTY opencode's `run` needs; -q quiet, no typescript file.
     proc = subprocess.run(
-        ["script", "-q", "/dev/null", "opencode", "run", "-m", OPENCODE_MODEL, prompt],
+        ["script", "-q", "/dev/null", "opencode", "run", "-m", model, prompt],
         capture_output=True, text=True, timeout=120, errors="replace",
     )
     return _clean_model_output((proc.stdout or "") + (proc.stderr or ""))
+
+
+def _pull_ollama_model(model: str) -> bool:
+    """Stream `ollama pull <model>` so the user sees live download progress. Returns True on success.
+
+    We do NOT capture output here — letting ollama write straight to the terminal shows its
+    real progress bars (percent, MB/s, ETA). Ctrl-C cancels the pull, not the whole app.
+    """
+    print(f"\n  Downloading Ollama model '{model}' (one-time, a few GB)…")
+    print("  ── live progress from ollama ──")
+    try:
+        rc = subprocess.call(["ollama", "pull", model])  # inherits stdout/stderr → live bars
+    except KeyboardInterrupt:
+        print("\n  Download cancelled.\n")
+        return False
+    except Exception as e:
+        print(f"  Could not start download: {e}\n")
+        return False
+    print("  ───────────────────────────────")
+    if rc == 0:
+        print("  ✓ Model ready.\n")
+        return True
+    print(f"  Download failed (ollama exit {rc}).\n")
+    return False
 
 
 def ask_about_file(c, question: str) -> None:
@@ -114,32 +180,49 @@ def ask_about_file(c, question: str) -> None:
         "Answer in plain text. Do not take any action; only explain."
     )
 
-    # Build the provider chain. Each entry: (name, available?, runner).
+    # Auto-discover the model each provider will use (env override > what the user already has).
+    ollama_model = _pick_ollama_model()
+    opencode_model = _pick_opencode_model()
+
+    # Ollama is installed but has NO models pulled → offer the one-time download (live progress),
+    # unless the user forced opencode. This is the keyless, private path.
+    if (not ollama_model and _have("ollama") and FORCED_PROVIDER != "opencode"):
+        try:
+            resp = input(
+                f"  Ollama is installed but no model is downloaded yet.\n"
+                f"  Download '{OLLAMA_DEFAULT_PULL}' now for free, local, private answers? [y/N] "
+            ).strip().lower()
+        except EOFError:
+            resp = "n"
+        if resp == "y" and _pull_ollama_model(OLLAMA_DEFAULT_PULL):
+            ollama_model = OLLAMA_DEFAULT_PULL
+
+    # Provider chain: (label, chosen-model, runner). Ollama (local/private) preferred.
     providers = [
-        ("Ollama (local)", _ollama_ready(), _ask_ollama),
-        ("OpenCode", _have("opencode"), _ask_opencode),
+        ("Ollama (local)", ollama_model, _ask_ollama),
+        ("OpenCode", opencode_model, _ask_opencode),
     ]
     if FORCED_PROVIDER in ("ollama", "opencode"):
         providers = [p for p in providers if p[0].lower().startswith(FORCED_PROVIDER)]
 
-    available = [p for p in providers if p[1]]
+    available = [p for p in providers if p[1]]   # only providers with a usable model
     if not available:
-        print("  (AI advisor unavailable. Install one — both are free and need no API key for this:)")
+        print("  (AI advisor unavailable. Add one — both are free and need no API key for this:)")
         print("    • Ollama (local, private):  https://ollama.com   then:  ollama pull llama3.2")
         print("    • OpenCode:                 https://opencode.ai   then:  opencode auth login\n")
         return
 
     print("  … asking the assistant (this can take a few seconds)")
-    for name, _ok, runner in available:
+    for name, model, runner in available:
         try:
-            answer = runner(prompt)
+            answer = runner(prompt, model)
         except subprocess.TimeoutExpired:
             print(f"  ({name} timed out — trying the next provider if any.)")
             continue
         except Exception:  # never let the advisor break the cleaner
             continue
         if answer:
-            print(f"\n  Assistant ({name}):")
+            print(f"\n  Assistant ({name} · {model}):")
             for line in answer.splitlines():
                 print(f"    {line}")
             print()
