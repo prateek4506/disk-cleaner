@@ -260,6 +260,48 @@ def human(nbytes: int) -> str:
     return f"{nbytes:.1f} PB"
 
 
+def _disp_path(path) -> str:
+    """Show the path with ~ for home, for compactness."""
+    s = str(path)
+    home = str(HOME)
+    return "~" + s[len(home):] if s.startswith(home) else s
+
+
+def _trunc_left(s: str, width: int) -> str:
+    """Truncate from the LEFT (keep the meaningful tail) with a leading ellipsis."""
+    return s if len(s) <= width else "…" + s[-(width - 1):]
+
+
+def print_candidate_table(cands) -> None:
+    """Render the candidates as a bordered table: #, Size, Category, Item (+ reason row)."""
+    n_w = max(len("#"), len(str(len(cands))))
+    size_w = max(len("Size"), max((len(human(c.size)) for c in cands), default=4))
+    cat_w = max(len("Category"), max((len(c.category) for c in cands), default=8))
+    # Fit the Item column to the terminal width, with sensible bounds.
+    term_w = shutil.get_terminal_size((100, 24)).columns
+    fixed = n_w + size_w + cat_w + 13  # borders + padding between the 4 columns
+    item_w = max(24, min(70, term_w - fixed))
+
+    def row(a, b, c, d):
+        return f"  │ {a:>{n_w}} │ {b:>{size_w}} │ {c:<{cat_w}} │ {d:<{item_w}} │"
+
+    bar_t = f"  ┌{'─'*(n_w+2)}┬{'─'*(size_w+2)}┬{'─'*(cat_w+2)}┬{'─'*(item_w+2)}┐"
+    bar_m = f"  ├{'─'*(n_w+2)}┼{'─'*(size_w+2)}┼{'─'*(cat_w+2)}┼{'─'*(item_w+2)}┤"
+    bar_b = f"  └{'─'*(n_w+2)}┴{'─'*(size_w+2)}┴{'─'*(cat_w+2)}┴{'─'*(item_w+2)}┘"
+    # The reason line spans the Size+Category+Item columns (incl. their 2 inner separators
+    # "│" and the surrounding spaces): size_w+cat_w+item_w + 2*3 padding + 2 separators.
+    reason_w = size_w + cat_w + item_w + 6
+
+    print(bar_t)
+    print(row("#", "Size", "Category", "Item"))
+    print(bar_m)
+    for i, c in enumerate(cands, 1):
+        print(row(i, human(c.size), _trunc_left(c.category, cat_w), _trunc_left(_disp_path(c.path), item_w)))
+        reason = _trunc_left("↳ " + c.reason, reason_w)
+        print(f"  │ {'':>{n_w}} │ {reason:<{reason_w}} │")
+    print(bar_b)
+
+
 def dir_size(path: Path) -> int:
     total = 0
     try:
@@ -422,9 +464,7 @@ def main():
 
     total = sum(c.size for c in cands)
     print(f"Found {len(cands)} candidates totalling {human(total)} reclaimable:\n")
-    for c in cands:
-        print(f"  [{c.category:14}] {human(c.size):>9}  {c.path}")
-        print(f"  {'':14}            ↳ {c.reason}")
+    print_candidate_table(cands)
     print()
 
     if not args.delete:
@@ -432,8 +472,15 @@ def main():
         return
 
     reclaimed = 0
-    print("Deletion mode — you'll be asked about each item.")
-    print("  y = delete   N = skip (default)   q = quit   ? = ask the assistant about this file\n")
+    print("Deletion mode — you'll be asked about each item. Your options at each prompt:\n")
+    print("  ┌─────┬──────────────────────────────────────────────────────────┐")
+    print("  │ key │ what it does                                              │")
+    print("  ├─────┼──────────────────────────────────────────────────────────┤")
+    print("  │  y  │ delete this item                                         │")
+    print("  │  N  │ skip it and move on  (default — just press Enter)        │")
+    print("  │  q  │ quit — stop here and exit (already-deleted items stay)   │")
+    print("  │  ?  │ ask the AI assistant what this file is / if it's safe    │")
+    print("  └─────┴──────────────────────────────────────────────────────────┘\n")
     for c in cands:
         while True:
             ans = input(f"Delete [{human(c.size)}] {c.path} ? (y/N/q/?) ").strip().lower()
