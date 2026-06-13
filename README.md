@@ -81,6 +81,26 @@ preferring the private/local option:
    **available model, preferring a free one** (so it won't pick a paid model that may be
    quota-limited).
 
+### Why run AI locally? (Ollama)
+
+A disk cleaner pokes around your personal files, so where the AI runs matters:
+
+- 🔒 **Private** — your file paths never leave your Mac. No cloud service ever sees what's
+  on your disk.
+- 💸 **Free & keyless** — no account, no API key, no credit card, no bill. Ever.
+- ✈️ **Offline** — the `?` advisor answers on a plane or a locked-down network.
+- ♾️ **No limits** — ask about as many files as you like; no quotas or throttling.
+- 🧹 **Deletable** — the model is just files. Try it, and if it's not for you, reclaim the
+  space in one command — no account to cancel, no leftovers:
+  ```bash
+  ollama rm llama3.2        # remove the model (~2 GB back)
+  brew uninstall ollama     # remove the runtime too (~50 MB)
+  ```
+
+A local 3B model is less sharp than a frontier cloud model, but *"is this cache safe to
+delete?"* is a narrow, well-understood question — it's more than good enough. And the
+built-in heuristics work great with no AI at all.
+
 If **neither** is installed, `?` tells you how to add one and the normal `y/N` flow continues —
 the advisor can never break the cleaner.
 

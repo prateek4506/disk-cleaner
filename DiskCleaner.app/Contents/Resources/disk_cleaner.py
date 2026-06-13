@@ -464,6 +464,48 @@ def delete(path: Path) -> bool:
         return False
 
 
+def _ai_active_model() -> str:
+    """Return a short 'provider · model' label if an AI advisor is ready now, else ''."""
+    if FORCED_PROVIDER != "opencode":
+        m = _pick_ollama_model()
+        if m:
+            return f"Ollama · {m}  (local & private)"
+    if FORCED_PROVIDER != "ollama":
+        m = _pick_opencode_model()
+        if m:
+            return f"OpenCode · {m}"
+    return ""
+
+
+def print_ai_banner() -> None:
+    """At startup, tell the user whether the AI advisor is live — and if not, make the
+    case for adding Ollama (private, free, keyless). The cleaner works fully without it."""
+    active = _ai_active_model()
+    if active:
+        print("  🤖 AI advisor: ON — " + active)
+        print("     Press ? at any prompt to ask whether a file is safe to delete.\n")
+        return
+
+    # No AI available — show the attractive pitch (the built-in engine still works great).
+    # Borderless (left rule only) so wide emoji glyphs can't break box alignment.
+    print("  ───────────────────────────────────────────────────────────────")
+    print("   🧹  The built-in engine already finds safe junk to delete.")
+    print("       Add a local AI model and it gets smarter — press ? on any")
+    print("       file to ask \"what is this / is it safe?\" in plain English.")
+    print()
+    print("   Why run AI locally with Ollama?")
+    print("     🔒  Private    your file paths never leave this Mac")
+    print("     💸  Free       no account, no API key, no bill, no limits")
+    print("     ✈️   Offline    works with no internet")
+    print("     🧹  Deletable  it's just files — try it, remove it anytime")
+    print("                    (ollama rm <model>) with zero leftovers")
+    print()
+    print("   Get started (one-time):")
+    print("     brew install ollama && ollama pull llama3.2     (~2 GB)")
+    print("   …or just keep going — the cleaner works perfectly without it.")
+    print("  ───────────────────────────────────────────────────────────────\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Suggest & confirm-delete macOS junk.")
     ap.add_argument("--path", default=str(HOME), help="Root to scan (default: home)")
@@ -474,6 +516,7 @@ def main():
     root = Path(args.path).expanduser()
     min_bytes = int(args.min_size * 1024 * 1024)
 
+    print_ai_banner()
     print(f"Scanning {root} for reclaimable junk...\n")
     cands = [c for c in find_candidates(root) if c.size >= min_bytes]
     cands.sort(key=lambda c: c.size, reverse=True)
