@@ -28,9 +28,15 @@ Every Mac cleaner shows you a wall of files and a "Clean" button. None of them t
 anything without you typing `y`**.
 
 - 🔍 Scans your home folder for genuinely-safe junk (caches, logs, trash, build artifacts,
-  `.DS_Store`, stale downloads), ranked by size.
+  `.DS_Store`, stale & large downloads), ranked by size.
+- 🧩 **Finds leftovers from apps you've uninstalled** — the support data, caches and
+  preferences macOS leaves behind in `~/Library`. Only flagged when no installed app claims
+  them *and* they've been untouched for 30+ days (so data for apps you still use is safe).
+- 🐘 **`--scan-disk`** — optionally sweep the *whole disk* for your single biggest files
+  (that forgotten 4 GB download, an old VM image), system paths always skipped.
 - 🤖 **`?` = ask the AI** about any file (path, size, category, why it was flagged + your
-  question). Advisory only — it explains, you decide.
+  question). Advisory only — it explains, you decide. Your biggest items are marked so you
+  know where it helps most.
 - 🔒 **Safe by default.** Suggestion-only unless you pass `--delete`. Per-file confirmation.
   Protected system paths are skipped.
 
@@ -59,7 +65,10 @@ disk-cleaner                 # scan & suggest (no deletions)
 disk-cleaner --delete        # interactively confirm each item
 disk-cleaner --min-size 100  # only show items ≥ 100 MB
 disk-cleaner --path ~/dev    # scan a specific folder
+disk-cleaner --scan-disk     # ALSO sweep the whole disk for the largest files (slower)
 ```
+
+Items marked `*` are your biggest finds — press `?` on those for an AI explanation.
 
 At each prompt: `y` delete · `N` skip (default) · `q` quit · **`?` ask the AI**.
 
