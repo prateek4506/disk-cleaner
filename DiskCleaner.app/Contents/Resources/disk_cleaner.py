@@ -288,13 +288,15 @@ def _trunc_left(s: str, width: int) -> str:
     return s if len(s) <= width else "…" + s[-(width - 1):]
 
 
-def print_candidate_table(cands, ai_hint_top=0) -> None:
+def print_candidate_table(cands, ai_hint_top=0, interactive=False) -> None:
     """Render the candidates as a bordered table: #, Size, Category, Item (+ reason row).
 
     If ai_hint_top > 0 and an AI advisor is available, the N biggest rows are marked with a
     '*' so the user knows exactly where pressing ? pays off most. Enrichment is on-demand
-    (the ? key), so the scan stays instant — the marker just guides attention."""
-    hint_rows = ai_hint_top if (ai_hint_top and _ai_active_model()) else 0
+    (the ? key), so the scan stays instant — the marker just guides attention. The "press ?"
+    legend is only shown when `interactive` is True (i.e. a y/N/?/q prompt actually follows);
+    otherwise there is nothing to press ? at, so we omit it."""
+    hint_rows = ai_hint_top if (ai_hint_top and interactive and _ai_active_model()) else 0
     n_w = max(len("#"), len(str(len(cands))))
     if hint_rows:
         n_w += 1  # room for the '*' AI marker in the # column
@@ -710,15 +712,32 @@ def main():
 
     total = sum(c.size for c in cands)
     print(f"Found {len(cands)} candidates totalling {human(total)} reclaimable:\n")
-    print_candidate_table(cands, ai_hint_top=10)
+    # Whether a y/N/?/q prompt will follow: always in --delete, or if the user accepts the
+    # offer below. We decide that first so the table's "press ?" legend is honest.
+    going_interactive = args.delete
+    if not going_interactive:
+        try:
+            resp = input("Review these and delete the ones you choose now? [y/N] ").strip().lower()
+        except EOFError:
+            resp = "n"
+        going_interactive = resp == "y"
+        print()
+
+    print_candidate_table(cands, ai_hint_top=10, interactive=going_interactive)
     print()
 
-    if not args.delete:
-        print("Suggestion-only mode. Re-run with --delete to confirm deletions per-file.")
+    if not going_interactive:
+        print("No problem — nothing was deleted. Re-run anytime; add --delete to go straight "
+              "to the prompts.")
         return
 
+    run_interactive_deletion(cands)
+
+
+def run_interactive_deletion(cands) -> None:
+    """Walk the candidates, asking y/N/q/? for each. Deletes only on an explicit 'y'."""
     reclaimed = 0
-    print("Deletion mode — you'll be asked about each item. Your options at each prompt:\n")
+    print("You'll be asked about each item. Your options at each prompt:\n")
     print("  ┌─────┬──────────────────────────────────────────────────────────┐")
     print("  │ key │ what it does                                              │")
     print("  ├─────┼──────────────────────────────────────────────────────────┤")
