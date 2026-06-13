@@ -234,7 +234,12 @@ def ask_about_file(c, question: str) -> None:
 # directories/files that are safe to remove (regenerable caches, trash, build
 # artifacts, stale downloads). We never touch app code, documents, or system files.
 
-OLD_DOWNLOAD_DAYS = 90  # downloads untouched this long are flagged
+OLD_DOWNLOAD_DAYS = 90          # SMALL downloads untouched this long are flagged
+BIG_DOWNLOAD_MB = 50           # downloads at/over this size are flagged REGARDLESS of age
+                               # (e.g. a .dmg you installed today and no longer need)
+INSTALLER_EXTS = {".dmg", ".pkg", ".iso", ".zip", ".tar", ".gz", ".tgz", ".xip"}
+BIG_FILE_MB = 5                # "largest files" scan: items under this are deprioritized
+LOW_PRIORITY = 9_999          # sort key bump so sub-5MB items rank last
 
 # Directories we will NEVER descend into or suggest, regardless of category.
 PROTECTED = {
@@ -242,6 +247,14 @@ PROTECTED = {
     HOME / ".ssh",
     HOME / ".gnupg",
 }
+
+# Roots that are NEVER user-deletable — skipped by the whole-disk scan so we never
+# surface (let alone offer to delete) something that would break macOS.
+SYSTEM_SKIP = [
+    "/System", "/Library/Apple", "/private/var/db", "/private/var/folders",
+    "/usr", "/bin", "/sbin", "/cores", "/dev", "/Volumes", "/.Spotlight-V100",
+    "/.fseventsd", "/private/var/vm",
+]
 
 
 @dataclass
@@ -379,14 +392,21 @@ def find_candidates(root: Path) -> list:
                     add(full, "Build artifact", f"{d} (regenerable build output)")
                     dirnames.remove(d)  # don't descend further
 
-    # 5. Old downloads
+    # 5. Downloads. A LARGE download is flagged regardless of age — e.g. a .dmg/.pkg you
+    # installed today and no longer need. SMALL downloads are only flagged when stale.
     downloads = root / "Downloads"
     if downloads.is_dir():
         for entry in downloads.iterdir():
             if is_protected(entry):
                 continue
+            sz = path_size(entry)
             age = days_since_access(entry)
-            if age >= OLD_DOWNLOAD_DAYS:
+            is_installer = entry.suffix.lower() in INSTALLER_EXTS
+            if sz >= BIG_DOWNLOAD_MB * 1024 * 1024 or (is_installer and sz > 0):
+                why = "Installer/archive — often safe to delete after use" if is_installer \
+                      else f"Large download ({human(sz)})"
+                add(entry, "Download", why)
+            elif age >= OLD_DOWNLOAD_DAYS:
                 add(entry, "Old download", f"Not accessed in {age:.0f} days")
 
     # 6. Sandboxed app container caches (~/Library/Containers/*/Data/Library/Caches).
