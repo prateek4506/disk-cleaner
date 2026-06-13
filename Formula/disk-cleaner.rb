@@ -8,8 +8,8 @@
 class DiskCleaner < Formula
   desc "macOS disk cleaner that explains each file with AI before you delete it"
   homepage "https://github.com/prateek4506/disk-cleaner"
-  url "https://github.com/prateek4506/disk-cleaner/archive/refs/tags/v0.2.1.tar.gz"
-  sha256 "447197f5890b0404087a220e43d034e8b10ed7f9a22c09f7c501f5663c0acd8a"
+  url "https://github.com/prateek4506/disk-cleaner/archive/refs/tags/v0.3.0.tar.gz"
+  sha256 "PENDING_AFTER_TAG_PUSH"
   license "MIT"
   head "https://github.com/prateek4506/disk-cleaner.git", branch: "main"
 
