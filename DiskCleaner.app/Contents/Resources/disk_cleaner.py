@@ -763,16 +763,16 @@ def run_interactive_deletion(cands) -> None:
     print("  │  y  │ delete this item                                         │")
     print("  │  N  │ skip it and move on  (default — just press Enter)        │")
     print("  │  q  │ quit — stop here and exit (already-deleted items stay)   │")
-    print("  │  ?  │ ask the AI assistant what this file is / if it's safe    │")
+    print("  │  ?  │ AI explains what this is & whether it's safe to delete   │")
     print("  └─────┴──────────────────────────────────────────────────────────┘\n")
     for c in cands:
         while True:
             ans = input(f"Delete [{human(c.size)}] {c.path} ? (y/N/q/?) ").strip().lower()
             if ans in ("?", "ask"):
-                # Ask a question about THIS file, then loop back and re-prompt the same item.
-                q = input("    Your question (e.g. 'what is this?', 'is it safe to delete?'): ").strip()
-                if q:
-                    ask_about_file(c, q)
+                # Answer the implicit question immediately — no follow-up prompt. The user
+                # pressed ? to learn "what is this and is it safe to delete?"; just answer it,
+                # then re-prompt the same item for the y/N/q decision.
+                ask_about_file(c, "What is this, and is it safe to delete?")
                 continue
             break  # y / N / q / anything-else → fall through to the decision below
 
