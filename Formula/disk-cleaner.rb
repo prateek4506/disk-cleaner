@@ -1,23 +1,17 @@
 # Homebrew formula for Disk Cleaner.
 #
-# To publish via a tap:
-#   1) Create a release/tag on GitHub (e.g. v0.1.0).
-#   2) Set `url` to that tag's tarball and fill in `sha256`
-#      (get it with: `curl -sL <tarball-url> | shasum -a 256`).
-#   3) Put this file in a `homebrew-tap` repo at Formula/disk-cleaner.rb, then:
-#         brew install prateek4506/tap/disk-cleaner
+# Lives in the tap repo (prateek4506/homebrew-tap) at Formula/disk-cleaner.rb, so:
+#     brew install prateek4506/tap/disk-cleaner
 #
-# Until a release exists, install with the curl one-liner or `brew install --HEAD` below.
+# To cut a new version: tag a release on the disk-cleaner repo, then update
+# `url` + `sha256` here (sha256 via: curl -sL <tarball-url> | shasum -a 256).
 class DiskCleaner < Formula
   desc "macOS disk cleaner that explains each file with AI before you delete it"
   homepage "https://github.com/prateek4506/disk-cleaner"
+  url "https://github.com/prateek4506/disk-cleaner/archive/refs/tags/v0.1.0.tar.gz"
+  sha256 "43677bd46c868b3b547c08a7965d6a7f00390450561c6446b5d97ee209157e5e"
   license "MIT"
   head "https://github.com/prateek4506/disk-cleaner.git", branch: "main"
-
-  # Released versions (uncomment + fill sha256 after tagging a release):
-  # url "https://github.com/prateek4506/disk-cleaner/archive/refs/tags/v0.1.0.tar.gz"
-  # sha256 "FILL_ME_IN"
-  # version "0.1.0"
 
   depends_on "python@3.12" => :recommended
 
