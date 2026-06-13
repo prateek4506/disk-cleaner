@@ -889,6 +889,10 @@ def main():
         return
 
     print_ai_banner()
+    print("  📷 Photo tools:  --find-dupes  remove byte-identical duplicate photos "
+          "(extras → Trash, one copy always kept)")
+    print("                   --blurry      review possibly-blurry photos by eye in a "
+          "local web gallery (opens your browser)\n")
     print(f"Scanning {root} for reclaimable junk...\n")
     all_found = find_candidates(root)
     cands = [c for c in all_found if c.size >= min_bytes]

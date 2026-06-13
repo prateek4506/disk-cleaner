@@ -70,6 +70,9 @@ disk-cleaner --find-dupes    # find duplicate PHOTOS (byte-identical copies)
 disk-cleaner --blurry        # review possibly-blurry photos in a local web gallery
 ```
 
+On a plain `disk-cleaner` run, the startup banner also reminds you the photo tools
+(`--find-dupes` and `--blurry`) exist, so you don't have to remember the flags.
+
 ### Duplicate photos
 
 `--find-dupes` scans for **byte-identical photo copies** (the same image saved in several
