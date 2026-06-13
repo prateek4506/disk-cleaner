@@ -240,6 +240,9 @@ BIG_DOWNLOAD_MB = 50           # downloads at/over this size are flagged REGARDL
 INSTALLER_EXTS = {".dmg", ".pkg", ".iso", ".zip", ".tar", ".gz", ".tgz", ".xip"}
 BIG_FILE_MB = 5                # "largest files" scan: items under this are deprioritized
 LOW_PRIORITY = 9_999          # sort key bump so sub-5MB items rank last
+LEFTOVER_COLD_DAYS = 30       # an app's leftover data must be untouched this long to flag —
+                              # an INSTALLED app touches its support files, so recent access
+                              # means it's not really orphaned (guards bundle-id mismatches)
 
 # Directories we will NEVER descend into or suggest, regardless of category.
 PROTECTED = {
@@ -346,10 +349,60 @@ def is_protected(path: Path) -> bool:
     return any(path == p or p in path.parents for p in PROTECTED)
 
 
+# Bundle IDs we never treat as "orphaned" even if no .app is found: Apple's own and
+# common frameworks/agents that legitimately live in ~/Library without a user-facing app.
+_NEVER_ORPHAN_PREFIXES = ("com.apple.", "group.com.apple.", "com.crashlytics", "com.google.")
+
+
+def installed_bundle_ids() -> set:
+    """Bundle identifiers of every app currently installed, so we can tell which
+    ~/Library leftovers belong to apps that are GONE. Reads CFBundleIdentifier from each
+    .app's Info.plist across the standard application locations."""
+    ids = set()
+    app_roots = [Path("/Applications"), HOME / "Applications",
+                 Path("/System/Applications"), Path("/Applications/Utilities")]
+    for root in app_roots:
+        if not root.is_dir():
+            continue
+        try:
+            entries = list(root.glob("*.app")) + list(root.glob("*/*.app"))
+        except OSError:
+            continue
+        for app in entries:
+            plist = app / "Contents" / "Info.plist"
+            try:
+                out = subprocess.run(
+                    ["defaults", "read", str(plist), "CFBundleIdentifier"],
+                    capture_output=True, text=True, timeout=5,
+                ).stdout.strip()
+            except Exception:
+                out = ""
+            if out:
+                ids.add(out.lower())
+    return ids
+
+
+def _looks_like_bundle_id(name: str) -> bool:
+    """Folder/file named like a reverse-DNS bundle id (e.g. 'com.spotify.client')."""
+    return bool(re.fullmatch(r"[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){1,}", name)) and "." in name
+
+
 def days_since_access(path: Path) -> float:
     try:
         atime = path.stat().st_atime
         return (time.time() - atime) / 86400
+    except OSError:
+        return 0.0
+
+
+def days_since_touched(path: Path) -> float:
+    """How long since this path was last accessed OR modified — whichever is more recent.
+    macOS often disables strict atime, so we also consider mtime; a recently-MODIFIED
+    folder clearly belongs to a live app even if atime looks stale."""
+    try:
+        st = path.stat()
+        newest = max(st.st_atime, st.st_mtime)
+        return (time.time() - newest) / 86400
     except OSError:
         return 0.0
 
@@ -441,7 +494,46 @@ def find_candidates(root: Path) -> list:
             if b.is_dir():
                 add(b, "iOS backup", "iPhone/iPad backup — large, restore-from-iCloud possible")
 
-    # 9. Stray .DS_Store files
+    # 9. Leftovers from UNINSTALLED apps. When you drag an app to the Trash, macOS leaves
+    # its support data behind in ~/Library, keyed by bundle id (e.g. com.spotify.client).
+    # We flag those folders ONLY when no installed .app claims that bundle id — so data for
+    # apps you still have is never touched. Apple/system ids are always left alone.
+    installed = installed_bundle_ids()
+    leftover_roots = [
+        (root / "Library" / "Application Support", "support data"),
+        (root / "Library" / "Caches", "cache"),
+        (root / "Library" / "Logs", "logs"),
+        (root / "Library" / "Preferences", "preferences"),
+        (root / "Library" / "Saved Application State", "saved window state"),
+        (root / "Library" / "Containers", "sandbox container"),
+        (root / "Library" / "HTTPStorages", "web storage"),
+    ]
+    for base, kind in leftover_roots:
+        if not base.is_dir():
+            continue
+        for entry in base.iterdir():
+            if is_protected(entry):
+                continue
+            # Preferences are ".plist" files; everything else is a folder named by bundle id.
+            name = entry.stem if entry.suffix == ".plist" else entry.name
+            # "<bundleid>.savedState" for saved state; strip the suffix to get the id.
+            name = name[:-len(".savedState")] if name.endswith(".savedState") else name
+            if not _looks_like_bundle_id(name):
+                continue
+            nl = name.lower()
+            if nl in installed or any(nl.startswith(p) for p in _NEVER_ORPHAN_PREFIXES):
+                continue
+            # Age guard: a still-installed app keeps touching its support files. If this
+            # data was accessed/modified recently, the app is effectively live — skip it,
+            # even if the bundle id didn't match (handles MAS/container naming quirks).
+            if days_since_touched(entry) < LEFTOVER_COLD_DAYS:
+                continue
+            cold = days_since_touched(entry)
+            add(entry, "App leftover",
+                f"{kind} for '{name}' — no matching app found, untouched {cold:.0f}d "
+                f"(verify before deleting)")
+
+    # 10. Stray .DS_Store files
     for dirpath, _, files in os.walk(root, onerror=lambda e: None):
         if "Library" in Path(dirpath).parts:
             continue
