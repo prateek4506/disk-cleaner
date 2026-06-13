@@ -88,7 +88,8 @@ A disk cleaner pokes around your personal files, so where the AI runs matters:
 - 🔒 **Private** — your file paths never leave your Mac. No cloud service ever sees what's
   on your disk.
 - 💸 **Free & keyless** — no account, no API key, no credit card, no bill. Ever.
-- ✈️ **Offline** — the `?` advisor answers on a plane or a locked-down network.
+- ✈️ **Offline** — once the model is pulled, the `?` advisor answers locally on a plane or a
+  locked-down network. (Only the one-time `brew install` / `ollama pull` needs internet.)
 - ♾️ **No limits** — ask about as many files as you like; no quotas or throttling.
 - 🧹 **Deletable** — the model is just files. Try it, and if it's not for you, reclaim the
   space in one command — no account to cancel, no leftovers:

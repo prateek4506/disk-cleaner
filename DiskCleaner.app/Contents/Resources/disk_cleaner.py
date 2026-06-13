@@ -496,7 +496,7 @@ def print_ai_banner() -> None:
     print("   Why run AI locally with Ollama?")
     print("     🔒  Private    your file paths never leave this Mac")
     print("     💸  Free       no account, no API key, no bill, no limits")
-    print("     ✈️   Offline    works with no internet")
+    print("     ✈️   Offline    runs locally with no internet (after setup)")
     print("     🧹  Deletable  it's just files — try it, remove it anytime")
     print("                    (ollama rm <model>) with zero leftovers")
     print()
