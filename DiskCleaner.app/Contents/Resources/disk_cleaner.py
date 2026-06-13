@@ -544,6 +544,56 @@ def find_candidates(root: Path) -> list:
     return cands
 
 
+def _skip_dir(path: Path) -> bool:
+    """True if a directory must not be descended into during the whole-disk scan."""
+    s = str(path)
+    if any(s == sk or s.startswith(sk + "/") for sk in SYSTEM_SKIP):
+        return True
+    if is_protected(path):
+        return True
+    # Don't descend into bundles/packages — a .app/.framework is one logical unit, and
+    # surfacing individual files inside it is noise (and deleting them breaks the app).
+    if path.suffix.lower() in (".app", ".framework", ".bundle", ".plugin", ".kext", ".photoslibrary"):
+        return True
+    return False
+
+
+def find_largest_files(root: Path, top_n: int = 40) -> list:
+    """Walk the filesystem and return the biggest INDIVIDUAL files as candidates, largest
+    first. Opt-in (--scan-disk) because a full walk is slow. Heavily guarded: never descends
+    into SYSTEM_SKIP / protected paths or app bundles, silently skips permission-denied dirs,
+    follows no symlinks. Files under BIG_FILE_MB are deprioritized (the user asked for the
+    truly large items). Pure discovery — these are just 'big files', not known-safe junk, so
+    the reason makes clear the user must judge each one."""
+    biggest = []   # list of (size, Path)
+    min_bytes = 1 * 1024 * 1024   # ignore sub-1MB entirely; not worth surfacing
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False,
+                                                onerror=lambda e: None):
+        here = Path(dirpath)
+        # Prune subdirectories we must not enter (modifying dirnames in-place prunes the walk).
+        dirnames[:] = [d for d in dirnames if not _skip_dir(here / d)]
+        for fn in filenames:
+            fp = here / fn
+            try:
+                st = fp.lstat()
+            except OSError:
+                continue
+            if not os.path.isfile(fp) or os.path.islink(fp):
+                continue
+            sz = st.st_size
+            if sz >= min_bytes:
+                biggest.append((sz, fp))
+
+    biggest.sort(key=lambda t: t[0], reverse=True)
+    out = []
+    for sz, fp in biggest[:top_n]:
+        small = sz < BIG_FILE_MB * 1024 * 1024
+        note = " (small — low priority)" if small else ""
+        out.append(Candidate(fp, sz, "Large file",
+                             f"One of the biggest files on disk{note} — review before deleting"))
+    return out
+
+
 def delete(path: Path) -> bool:
     try:
         if path.is_dir() and not path.is_symlink():
@@ -614,6 +664,9 @@ def main():
     ap.add_argument("--path", default=str(HOME), help="Root to scan (default: home)")
     ap.add_argument("--delete", action="store_true", help="Enable interactive deletion")
     ap.add_argument("--min-size", type=float, default=1.0, help="Min size in MB to show (default: 1)")
+    ap.add_argument("--scan-disk", action="store_true",
+                    help="Also scan the WHOLE disk for the largest files (slower). "
+                         "System/protected paths are always skipped.")
     args = ap.parse_args()
 
     root = Path(args.path).expanduser()
@@ -622,7 +675,23 @@ def main():
     print_ai_banner()
     print(f"Scanning {root} for reclaimable junk...\n")
     cands = [c for c in find_candidates(root) if c.size >= min_bytes]
-    cands.sort(key=lambda c: c.size, reverse=True)
+
+    # Opt-in whole-disk pass: surface the biggest individual files anywhere (guarded against
+    # system/protected paths). Dedup against junk we already found by resolved path.
+    if args.scan_disk:
+        disk_root = Path("/")
+        print(f"Scanning the whole disk ({disk_root}) for the largest files — this can "
+              f"take a minute…\n")
+        seen = {c.path.resolve() for c in cands}
+        for big in find_largest_files(disk_root):
+            if big.size >= min_bytes and big.path.resolve() not in seen:
+                cands.append(big)
+
+    # Sort largest-first, but keep deprioritized sub-BIG_FILE_MB "Large file" items last.
+    cands.sort(key=lambda c: (
+        0 if not (c.category == "Large file" and c.size < BIG_FILE_MB * 1024 * 1024) else LOW_PRIORITY,
+        -c.size,
+    ))
 
     if not cands:
         print("Nothing above the size threshold found. Disk looks clean.")
