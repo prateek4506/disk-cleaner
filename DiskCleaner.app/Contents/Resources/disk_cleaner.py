@@ -288,9 +288,16 @@ def _trunc_left(s: str, width: int) -> str:
     return s if len(s) <= width else "…" + s[-(width - 1):]
 
 
-def print_candidate_table(cands) -> None:
-    """Render the candidates as a bordered table: #, Size, Category, Item (+ reason row)."""
+def print_candidate_table(cands, ai_hint_top=0) -> None:
+    """Render the candidates as a bordered table: #, Size, Category, Item (+ reason row).
+
+    If ai_hint_top > 0 and an AI advisor is available, the N biggest rows are marked with a
+    '*' so the user knows exactly where pressing ? pays off most. Enrichment is on-demand
+    (the ? key), so the scan stays instant — the marker just guides attention."""
+    hint_rows = ai_hint_top if (ai_hint_top and _ai_active_model()) else 0
     n_w = max(len("#"), len(str(len(cands))))
+    if hint_rows:
+        n_w += 1  # room for the '*' AI marker in the # column
     size_w = max(len("Size"), max((len(human(c.size)) for c in cands), default=4))
     cat_w = max(len("Category"), max((len(c.category) for c in cands), default=8))
     # Fit the Item column to the terminal width, with sensible bounds.
@@ -312,10 +319,14 @@ def print_candidate_table(cands) -> None:
     print(row("#", "Size", "Category", "Item"))
     print(bar_m)
     for i, c in enumerate(cands, 1):
-        print(row(i, human(c.size), _trunc_left(c.category, cat_w), _trunc_left(_disp_path(c.path), item_w)))
+        num = f"{i}*" if (hint_rows and i <= hint_rows) else str(i)
+        print(row(num, human(c.size), _trunc_left(c.category, cat_w), _trunc_left(_disp_path(c.path), item_w)))
         reason = _trunc_left("↳ " + c.reason, reason_w)
         print(f"  │ {'':>{n_w}} │ {reason:<{reason_w}} │")
     print(bar_b)
+    if hint_rows:
+        print(f"   * = your {hint_rows} biggest items — press ? on these to have the AI "
+              f"explain what they are.")
 
 
 def dir_size(path: Path) -> int:
@@ -699,7 +710,7 @@ def main():
 
     total = sum(c.size for c in cands)
     print(f"Found {len(cands)} candidates totalling {human(total)} reclaimable:\n")
-    print_candidate_table(cands)
+    print_candidate_table(cands, ai_hint_top=10)
     print()
 
     if not args.delete:
