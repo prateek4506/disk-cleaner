@@ -63,7 +63,7 @@ cd disk-cleaner && ./bin/disk-cleaner
 ```bash
 disk-cleaner                 # scan & suggest (no deletions)
 disk-cleaner --delete        # interactively confirm each item
-disk-cleaner --min-size 100  # only show items ≥ 100 MB
+disk-cleaner --min-size 1    # show small junk too (default hides items < 10 MB)
 disk-cleaner --path ~/dev    # scan a specific folder
 disk-cleaner --scan-disk     # ALSO sweep the whole disk for the largest files (slower)
 ```

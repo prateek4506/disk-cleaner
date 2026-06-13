@@ -676,7 +676,9 @@ def main():
     ap = argparse.ArgumentParser(description="Suggest & confirm-delete macOS junk.")
     ap.add_argument("--path", default=str(HOME), help="Root to scan (default: home)")
     ap.add_argument("--delete", action="store_true", help="Enable interactive deletion")
-    ap.add_argument("--min-size", type=float, default=1.0, help="Min size in MB to show (default: 1)")
+    ap.add_argument("--min-size", type=float, default=10.0,
+                    help="Min size in MB to show (default: 10). Use --min-size 1 to also see "
+                         "the many tiny regenerable caches.")
     ap.add_argument("--scan-disk", action="store_true",
                     help="Also scan the WHOLE disk for the largest files (slower). "
                          "System/protected paths are always skipped.")
@@ -687,7 +689,10 @@ def main():
 
     print_ai_banner()
     print(f"Scanning {root} for reclaimable junk...\n")
-    cands = [c for c in find_candidates(root) if c.size >= min_bytes]
+    all_found = find_candidates(root)
+    cands = [c for c in all_found if c.size >= min_bytes]
+    # Track what the size threshold hid, so we can offer it without burying the real wins.
+    hidden = [c for c in all_found if c.size < min_bytes]
 
     # Opt-in whole-disk pass: surface the biggest individual files anywhere (guarded against
     # system/protected paths). Dedup against junk we already found by resolved path.
@@ -706,8 +711,19 @@ def main():
         -c.size,
     ))
 
+    def hidden_note() -> str:
+        if not hidden:
+            return ""
+        htotal = sum(c.size for c in hidden)
+        return (f"  (+{len(hidden)} smaller items under {args.min_size:g} MB, {human(htotal)} "
+                f"total — see them with --min-size 1)")
+
     if not cands:
-        print("Nothing above the size threshold found. Disk looks clean.")
+        if hidden:
+            print(f"No items ≥ {args.min_size:g} MB. {len(hidden)} smaller ones exist "
+                  f"({human(sum(c.size for c in hidden))}) — see them with --min-size 1.")
+        else:
+            print("Nothing reclaimable found. Disk looks clean.")
         return
 
     total = sum(c.size for c in cands)
@@ -724,6 +740,9 @@ def main():
         print()
 
     print_candidate_table(cands, ai_hint_top=10, interactive=going_interactive)
+    note = hidden_note()
+    if note:
+        print(note)
     print()
 
     if not going_interactive:
