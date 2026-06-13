@@ -66,6 +66,23 @@ disk-cleaner --delete        # interactively confirm each item
 disk-cleaner --min-size 1    # show small junk too (default hides items < 10 MB)
 disk-cleaner --path ~/dev    # scan a specific folder
 disk-cleaner --scan-disk     # ALSO sweep the whole disk for the largest files (slower)
+disk-cleaner --find-dupes    # find duplicate PHOTOS (byte-identical copies)
+```
+
+### Duplicate photos
+
+`--find-dupes` scans for **byte-identical photo copies** (the same image saved in several
+folders) and groups them, biggest wasted-space first. Because photos are irreplaceable, this
+mode is extra careful:
+
+- **Exact matches only** (SHA-256) — zero false positives. Resized or edited versions are
+  *not* flagged (that's a future, opt-in feature).
+- **One copy is always kept.** You confirm each group and can pick which copy to keep.
+- **Extras go to the Trash, never hard-deleted** — fully recoverable ("Put Back" in Finder).
+
+```bash
+disk-cleaner --find-dupes                 # review only — shows the duplicate sets
+disk-cleaner --find-dupes --delete        # confirm each set; extras move to Trash
 ```
 
 Items marked `*` are your biggest finds — press `?` on those for an AI explanation.

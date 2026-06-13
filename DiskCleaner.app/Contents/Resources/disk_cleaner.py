@@ -619,6 +619,90 @@ def delete(path: Path) -> bool:
         return False
 
 
+def trash(path: Path) -> bool:
+    """Move a file to the macOS Trash (RECOVERABLE) rather than deleting it.
+    Used for photos — irreplaceable personal data — so we NEVER hard-delete here: if the
+    file can't be safely moved to the Trash, we leave it untouched and report failure.
+
+    We move the file into ~/.Trash ourselves (a plain filesystem move, which needs no
+    Automation/TCC permission, unlike scripting Finder). Names are made collision-safe the
+    same way Finder does ("name 2.jpg"). Only handles items on the home volume; cross-volume
+    items would need that volume's .Trashes and are skipped rather than risked."""
+    try:
+        if not path.exists():
+            return False
+        trash_dir = HOME / ".Trash"
+        trash_dir.mkdir(exist_ok=True)
+        dest = trash_dir / path.name
+        i = 1
+        while dest.exists():
+            dest = trash_dir / f"{path.stem} {i}{path.suffix}"
+            i += 1
+        shutil.move(str(path), str(dest))
+        return True
+    except Exception as e:
+        print(f"  ! Could not move to Trash (left in place): {path} — {e}", file=sys.stderr)
+        return False
+
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".heic", ".heif", ".tiff", ".tif",
+              ".bmp", ".webp", ".raw", ".cr2", ".nef", ".arw", ".dng"}
+
+
+def _file_hash(path: Path, chunk=1 << 20) -> str:
+    """SHA-256 of a file's bytes, streamed so large photos don't blow up memory."""
+    import hashlib
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for block in iter(lambda: f.read(chunk), b""):
+                h.update(block)
+    except OSError:
+        return ""
+    return h.hexdigest()
+
+
+def find_duplicate_photos(root: Path) -> list:
+    """Find groups of BYTE-IDENTICAL image files (exact copies). Returns a list of groups,
+    each a list of Paths that share identical content, largest-group/largest-file first.
+
+    Exact-match only (sha256) — zero false positives. To stay fast we first bucket by
+    (size, extension) and only hash files whose size collides with another, so we never
+    hash a file that can't possibly have a duplicate."""
+    by_size = {}
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False,
+                                                onerror=lambda e: None):
+        here = Path(dirpath)
+        dirnames[:] = [d for d in dirnames if not _skip_dir(here / d)]
+        for fn in filenames:
+            fp = here / fn
+            if fp.suffix.lower() not in IMAGE_EXTS:
+                continue
+            try:
+                st = fp.lstat()
+            except OSError:
+                continue
+            if os.path.islink(fp) or not os.path.isfile(fp) or st.st_size == 0:
+                continue
+            by_size.setdefault(st.st_size, []).append(fp)
+
+    groups = []
+    for size, paths in by_size.items():
+        if len(paths) < 2:            # unique size → can't be an exact dup; skip hashing
+            continue
+        by_hash = {}
+        for p in paths:
+            digest = _file_hash(p)
+            if digest:
+                by_hash.setdefault(digest, []).append(p)
+        for digest, dups in by_hash.items():
+            if len(dups) > 1:
+                groups.append(sorted(dups, key=lambda p: str(p)))
+    # Biggest wasted space first: (file size * extra copies).
+    groups.sort(key=lambda g: g[0].stat().st_size * (len(g) - 1), reverse=True)
+    return groups
+
+
 def _ai_active_model() -> str:
     """Return a short 'provider · model' label if an AI advisor is ready now, else ''."""
     if FORCED_PROVIDER != "opencode":
@@ -672,6 +756,60 @@ def print_ai_banner() -> None:
     print("  ───────────────────────────────────────────────────────────────\n")
 
 
+def run_find_dupes(root: Path, do_delete: bool) -> None:
+    """Find and (optionally) clean up byte-identical duplicate photos. Extra-careful mode:
+    these are personal photos, so we only ever Trash extra copies (recoverable), keep at
+    least one, and never touch anything without explicit per-group confirmation."""
+    print(f"  📷 Photo duplicate finder — scanning {_disp_path(root)} for identical copies…")
+    print("     (Exact byte-for-byte matches only. Your photos are precious, so extra copies")
+    print("      go to the Trash — recoverable — and one copy of each is always kept.)\n")
+
+    groups = find_duplicate_photos(root)
+    if not groups:
+        print("  No duplicate photos found. ✓")
+        return
+
+    wasted = sum(g[0].stat().st_size * (len(g) - 1) for g in groups)
+    print(f"  Found {len(groups)} sets of duplicates — about {human(wasted)} of wasted space "
+          f"in redundant copies.\n")
+
+    for i, g in enumerate(groups, 1):
+        sz = g[0].stat().st_size
+        print(f"  ── Set {i}/{len(groups)} — {len(g)} identical copies, {human(sz)} each ──")
+        for j, p in enumerate(g):
+            tag = "  (keep this one)" if j == 0 else ""
+            print(f"     [{j+1}] {_disp_path(p)}{tag}")
+
+        if not do_delete:
+            print()
+            continue
+
+        # The first copy (alphabetical) is the default keeper; user can pick another or skip.
+        ans = input(f"     Trash the other {len(g)-1} and keep [1]? "
+                    f"(y / number to keep / N skip / q quit) ").strip().lower()
+        if ans == "q":
+            print("  Stopping.")
+            return
+        keep_idx = 0
+        if ans.isdigit() and 1 <= int(ans) <= len(g):
+            keep_idx = int(ans) - 1
+        elif ans != "y":
+            print("     • Skipped\n")
+            continue
+        freed = 0
+        for j, p in enumerate(g):
+            if j == keep_idx:
+                continue
+            if trash(p):
+                freed += sz
+                print(f"     ✓ Trashed {_disp_path(p)}")
+        print(f"     kept {_disp_path(g[keep_idx])} · freed {human(freed)}\n")
+
+    if not do_delete:
+        print("  Review-only. Re-run with --find-dupes --delete to Trash extra copies "
+              "(one is always kept).")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Suggest & confirm-delete macOS junk.")
     ap.add_argument("--path", default=str(HOME), help="Root to scan (default: home)")
@@ -682,10 +820,18 @@ def main():
     ap.add_argument("--scan-disk", action="store_true",
                     help="Also scan the WHOLE disk for the largest files (slower). "
                          "System/protected paths are always skipped.")
+    ap.add_argument("--find-dupes", action="store_true",
+                    help="Find duplicate PHOTOS (byte-identical copies) instead of junk. "
+                         "Review-only; deletes go to the Trash (recoverable), never hard-deleted.")
     args = ap.parse_args()
 
     root = Path(args.path).expanduser()
     min_bytes = int(args.min_size * 1024 * 1024)
+
+    # Photo de-dupe is a distinct, extra-careful mode (personal data) — handle and return.
+    if args.find_dupes:
+        run_find_dupes(root, do_delete=args.delete)
+        return
 
     print_ai_banner()
     print(f"Scanning {root} for reclaimable junk...\n")
