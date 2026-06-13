@@ -67,6 +67,7 @@ disk-cleaner --min-size 1    # show small junk too (default hides items < 10 MB)
 disk-cleaner --path ~/dev    # scan a specific folder
 disk-cleaner --scan-disk     # ALSO sweep the whole disk for the largest files (slower)
 disk-cleaner --find-dupes    # find duplicate PHOTOS (byte-identical copies)
+disk-cleaner --blurry        # review possibly-blurry photos in a local web gallery
 ```
 
 ### Duplicate photos
@@ -84,6 +85,26 @@ mode is extra careful:
 disk-cleaner --find-dupes                 # review only — shows the duplicate sets
 disk-cleaner --find-dupes --delete        # confirm each set; extras move to Trash
 ```
+
+### Blurry photos (experimental, visual)
+
+`--blurry` scores every photo's sharpness and opens a **local web gallery** (in your browser,
+photos never leave your Mac) showing them **blurriest-first** as thumbnails. You tick the ones
+you want gone and click **Move to Trash**.
+
+This is deliberately hands-off about deciding *for* you, because blur is subjective —
+intentional bokeh and portrait-mode shots score "soft" too:
+
+- The sharpness score only **orders and tints** candidates; **nothing is auto-selected**.
+- **You review every photo by eye** before anything happens.
+- Selected photos go to the **Trash (recoverable)** — never hard-deleted.
+
+```bash
+disk-cleaner --blurry        # opens the gallery; Ctrl-C in the terminal when done
+```
+
+> Needs image libraries (`Pillow`, plus `pillow-heif` for iPhone HEIC). The tool offers to
+> `pip install` them the first time — the rest of disk-cleaner stays dependency-free.
 
 Items marked `*` are your biggest finds — press `?` on those for an AI explanation.
 

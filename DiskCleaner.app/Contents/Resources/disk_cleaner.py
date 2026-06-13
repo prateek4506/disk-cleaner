@@ -810,6 +810,53 @@ def run_find_dupes(root: Path, do_delete: bool) -> None:
               "(one is always kept).")
 
 
+def run_blurry_review(root: Path) -> None:
+    """Score photos by sharpness and open a LOCAL web gallery so the user can SEE the
+    likely-blurry shots and pick which to Trash by eye. Review-only; nothing is auto-selected
+    or auto-deleted. Image libraries are imported lazily here so the rest of the tool stays
+    dependency-free; if they're missing we explain how to install them and stop."""
+    print("  📷 Blurry-photo review (experimental). Your eyes decide — the score only orders")
+    print("     candidates. Blur can be intentional (bokeh/portrait), so nothing is auto-picked.")
+    print("     Selected photos go to the Trash (recoverable); nothing is hard-deleted.\n")
+
+    # Lazy import: keep the main cleaner zero-dependency. photo_blur lives next to this file.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import photo_blur
+    except Exception as e:
+        print(f"  Could not load the photo module: {e}")
+        return
+
+    try:
+        print(f"  Scanning {_disp_path(root)} for photos and scoring sharpness…")
+        candidates = photo_blur.scan_blurry(root)
+    except ImportError as e:
+        # Missing Pillow/HEIC — show the actionable message and offer to install.
+        print(f"\n  {e}\n")
+        try:
+            resp = input("  Install these now with pip? [y/N] ").strip().lower()
+        except EOFError:
+            resp = "n"
+        if resp != "y":
+            print("  Skipped. Re-run --blurry after installing the libraries.")
+            return
+        rc = subprocess.call([sys.executable, "-m", "pip", "install", "--user",
+                              "Pillow", "pillow-heif"])
+        if rc != 0:
+            print("  Install failed. Please install manually, then re-run --blurry.")
+            return
+        print("  Installed. Re-scanning…\n")
+        candidates = photo_blur.scan_blurry(root)
+
+    if not candidates:
+        print("  No readable photos found to review.")
+        return
+
+    soft = sum(1 for c in candidates if c["soft"])
+    print(f"  Found {len(candidates)} photos ({soft} look soft). Opening the gallery…\n")
+    photo_blur.serve_gallery(candidates, trash)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Suggest & confirm-delete macOS junk.")
     ap.add_argument("--path", default=str(HOME), help="Root to scan (default: home)")
@@ -823,6 +870,9 @@ def main():
     ap.add_argument("--find-dupes", action="store_true",
                     help="Find duplicate PHOTOS (byte-identical copies) instead of junk. "
                          "Review-only; deletes go to the Trash (recoverable), never hard-deleted.")
+    ap.add_argument("--blurry", action="store_true",
+                    help="Review possibly-BLURRY photos in a local web gallery and pick which "
+                         "to Trash by eye. Review-only; needs image libraries (offers install).")
     args = ap.parse_args()
 
     root = Path(args.path).expanduser()
@@ -831,6 +881,11 @@ def main():
     # Photo de-dupe is a distinct, extra-careful mode (personal data) — handle and return.
     if args.find_dupes:
         run_find_dupes(root, do_delete=args.delete)
+        return
+
+    # Blurry-photo visual review — opt-in, needs image libs (lazy-imported), review-only.
+    if args.blurry:
+        run_blurry_review(root)
         return
 
     print_ai_banner()
