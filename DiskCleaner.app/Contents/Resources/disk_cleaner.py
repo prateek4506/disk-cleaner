@@ -486,7 +486,18 @@ def print_ai_banner() -> None:
         print("     Press ? at any prompt to ask whether a file is safe to delete.\n")
         return
 
-    # No AI available — show the attractive pitch (the built-in engine still works great).
+    # Ollama is installed but no model is pulled — they're one command away, so don't tell
+    # them to install what they already have. Show the short "just pull a model" nudge.
+    if _have("ollama") and FORCED_PROVIDER != "opencode":
+        print("  ───────────────────────────────────────────────────────────────")
+        print("   🤖  Ollama is installed — pull one model and the ? advisor turns on:")
+        print(f"         ollama pull {OLLAMA_DEFAULT_PULL}     (~2 GB, one-time)")
+        print("   Or press ? on any file later and the cleaner offers to download it for you.")
+        print("   …meanwhile the built-in engine works perfectly without it.")
+        print("  ───────────────────────────────────────────────────────────────\n")
+        return
+
+    # Nothing installed — show the full attractive pitch (built-in engine still works great).
     # Borderless (left rule only) so wide emoji glyphs can't break box alignment.
     print("  ───────────────────────────────────────────────────────────────")
     print("   🧹  The built-in engine already finds safe junk to delete.")
